@@ -91,7 +91,15 @@ export function AnalysisPage(): JSX.Element {
   }, [canSubmit, inputMode, inputUrl, inputText, selectedPersonaIds, navigate, toast]);
 
   return (
-    <section className="px-6 py-6">
+    <section className="px-6 py-6 relative">
+      {/* Loading overlay while pipeline runs */}
+      {submitting && (
+        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center rounded-xl bg-white/80 backdrop-blur-sm">
+          <span className="h-8 w-8 animate-spin rounded-full border-3 border-[#4166F5] border-t-transparent" />
+          <p className="mt-3 text-sm font-semibold text-[#0F172A]">Analyzing...</p>
+          <p className="mt-1 text-xs text-[#64748B]">This may take 30-60 seconds</p>
+        </div>
+      )}
       <h1 className="text-[13px] font-bold uppercase tracking-[0.1em] text-[#64748B]">Analysis</h1>
 
       {/* Input mode tabs */}
