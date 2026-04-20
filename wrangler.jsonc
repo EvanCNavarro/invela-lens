@@ -1,0 +1,34 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "invela-lens",
+  "main": "./src/index.ts",
+  "compatibility_date": "2026-04-20",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "./dist/",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "invela-lens",
+      "database_id": "placeholder",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "UPLOADS",
+      "bucket_name": "invela-lens-uploads"
+    }
+  ],
+  "ai": {
+    "binding": "AI"
+  },
+  "vars": {
+    "CF_ACCOUNT_ID": "318d95fea69910a23a72a8797e03ed7d"
+  },
+  "observability": { "enabled": true }
+}

@@ -1,0 +1,34 @@
+{
+  "name": "invela-lens",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently --names \"ui,worker\" --prefix-colors \"cyan,magenta\" \"npm:dev:ui\" \"npm:dev:worker\"",
+    "dev:ui": "cd ui && vite --port 2685",
+    "dev:worker": "wrangler dev --port 2686",
+    "build": "cd ui && VITE_BASE_PATH=/apps/persona-lens VITE_BUILD_VERSION=${BUILD_VERSION:-dev} vite build --outDir ../dist --emptyOutDir",
+    "deploy": "export BUILD_VERSION=$(date +%s) && npm run build && wrangler deploy --var BUILD_VERSION:$BUILD_VERSION",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^7.1.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20241127.0",
+    "@tailwindcss/vite": "^4.0.0",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.1.0",
+    "tailwindcss": "^4.0.0",
+    "typescript": "^5.6.0",
+    "vite": "^5.4.0",
+    "vitest": "^4.1.0",
+    "wrangler": "^4.83.0"
+  }
+}
