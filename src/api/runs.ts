@@ -26,18 +26,19 @@ export async function handleRunsCreate(request: Request, env: Env, ctx: Executio
      VALUES (?1, ?2, ?3, ?4, 'running', ?5, ?6)`
   ).bind(id, body.input_type, body.input_url ?? null, JSON.stringify(body.persona_ids), now, createdBy).run();
 
-  // Launch pipeline in background
-  ctx.waitUntil(
-    runPipeline(env, {
+  // Run pipeline inline — waitUntil gets killed for long Claude API calls.
+  // Client polls via SSE /api/runs/:id/events for progress.
+  await runPipeline(env, {
       id,
       input_type: body.input_type,
       input_url: body.input_url ?? null,
       input_text: body.input_text ?? null,
       persona_ids: JSON.stringify(body.persona_ids),
-    }),
-  );
+    });
 
-  return Response.json({ id, status: 'running' }, { status: 201 });
+  // Pipeline finished — return final status
+  const finalRun = await env.DB.prepare('SELECT status FROM runs WHERE id = ?1').bind(id).first<{status: string}>();
+  return Response.json({ id, status: finalRun?.status ?? 'completed' }, { status: 201 });
 }
 
 export async function handleRunsGet(_request: Request, env: Env, id: string): Promise<Response> {
