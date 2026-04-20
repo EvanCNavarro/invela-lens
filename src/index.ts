@@ -1,3 +1,5 @@
+import { handlePersonasList, handlePersonasCreate, handlePersonasUpdate, handlePersonasDelete } from './api/personas';
+
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
@@ -35,6 +37,16 @@ async function dispatchApi(
     const email = request.headers.get('x-gateway-email');
     if (name) return Response.json({ name, email: email ?? '' });
     return Response.json(null);
+  }
+
+  // Personas CRUD
+  if (pathname === '/api/personas' && method === 'GET') return handlePersonasList(request, env);
+  if (pathname === '/api/personas' && method === 'POST') return handlePersonasCreate(request, env);
+
+  const personaMatch = pathname.match(/^\/api\/personas\/(\d+)$/);
+  if (personaMatch) {
+    if (method === 'PUT') return handlePersonasUpdate(request, env, personaMatch[1]);
+    if (method === 'DELETE') return handlePersonasDelete(request, env, personaMatch[1]);
   }
 
   return Response.json({ error: 'not_found', message: 'API route not found' }, { status: 404 });
