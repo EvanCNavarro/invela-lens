@@ -1,6 +1,7 @@
 import { ulid } from '../lib/ulid';
+import { runPipeline } from '../pipeline/orchestrator';
 
-export async function handleRunsCreate(request: Request, env: Env): Promise<Response> {
+export async function handleRunsCreate(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
   const body = await request.json() as {
     input_type: 'url' | 'text';
     input_url?: string;
@@ -25,13 +26,21 @@ export async function handleRunsCreate(request: Request, env: Env): Promise<Resp
      VALUES (?1, ?2, ?3, ?4, 'running', ?5, ?6)`
   ).bind(id, body.input_type, body.input_url ?? null, JSON.stringify(body.persona_ids), now, createdBy).run();
 
-  // TODO: Phase 4 will add pipeline execution here
-  // For now, just create the run and mark it as running
+  // Launch pipeline in background
+  ctx.waitUntil(
+    runPipeline(env, {
+      id,
+      input_type: body.input_type,
+      input_url: body.input_url ?? null,
+      input_text: body.input_text ?? null,
+      persona_ids: JSON.stringify(body.persona_ids),
+    }),
+  );
 
   return Response.json({ id, status: 'running' }, { status: 201 });
 }
 
-export async function handleRunsGet(request: Request, env: Env, id: string): Promise<Response> {
+export async function handleRunsGet(_request: Request, env: Env, id: string): Promise<Response> {
   const run = await env.DB.prepare('SELECT * FROM runs WHERE id = ?1').bind(id).first();
   if (!run) return Response.json({ error: 'not_found', message: 'Run not found' }, { status: 404 });
 
@@ -55,7 +64,7 @@ export async function handleRunsGet(request: Request, env: Env, id: string): Pro
   });
 }
 
-export async function handleRunsList(request: Request, env: Env, url: URL): Promise<Response> {
+export async function handleRunsList(_request: Request, env: Env, url: URL): Promise<Response> {
   const limit = parseInt(url.searchParams.get('limit') ?? '50');
   const offset = parseInt(url.searchParams.get('offset') ?? '0');
   const status = url.searchParams.get('status');

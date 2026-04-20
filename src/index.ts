@@ -1,5 +1,6 @@
 import { handlePersonasList, handlePersonasCreate, handlePersonasUpdate, handlePersonasDelete } from './api/personas';
 import { handleRunsCreate, handleRunsGet, handleRunsList } from './api/runs';
+import { handleRunsEvents } from './api/runs-events';
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -16,7 +17,7 @@ export default {
 async function dispatchApi(
   request: Request,
   env: Env,
-  _ctx: ExecutionContext,
+  ctx: ExecutionContext,
   url: URL,
 ): Promise<Response> {
   const { pathname } = url;
@@ -41,8 +42,11 @@ async function dispatchApi(
   }
 
   // Runs
-  if (pathname === '/api/runs' && method === 'POST') return handleRunsCreate(request, env);
+  if (pathname === '/api/runs' && method === 'POST') return handleRunsCreate(request, env, ctx);
   if (pathname === '/api/runs' && method === 'GET') return handleRunsList(request, env, url);
+
+  const eventsMatch = pathname.match(/^\/api\/runs\/([A-Za-z0-9]+)\/events$/);
+  if (eventsMatch && method === 'GET') return handleRunsEvents(request, env, eventsMatch[1]);
 
   const runMatch = pathname.match(/^\/api\/runs\/([A-Za-z0-9]+)$/);
   if (runMatch && method === 'GET') return handleRunsGet(request, env, runMatch[1]);
