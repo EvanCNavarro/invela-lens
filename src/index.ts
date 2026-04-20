@@ -1,4 +1,5 @@
 import { handlePersonasList, handlePersonasCreate, handlePersonasUpdate, handlePersonasDelete } from './api/personas';
+import { handleRunsCreate, handleRunsGet, handleRunsList } from './api/runs';
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -38,6 +39,13 @@ async function dispatchApi(
     if (name) return Response.json({ name, email: email ?? '' });
     return Response.json(null);
   }
+
+  // Runs
+  if (pathname === '/api/runs' && method === 'POST') return handleRunsCreate(request, env);
+  if (pathname === '/api/runs' && method === 'GET') return handleRunsList(request, env, url);
+
+  const runMatch = pathname.match(/^\/api\/runs\/([A-Za-z0-9]+)$/);
+  if (runMatch && method === 'GET') return handleRunsGet(request, env, runMatch[1]);
 
   // Personas CRUD
   if (pathname === '/api/personas' && method === 'GET') return handlePersonasList(request, env);
