@@ -14,7 +14,7 @@
     {
       "binding": "DB",
       "database_name": "invela-lens",
-      "database_id": "placeholder",
+      "database_id": "2143ac7c-d564-42aa-8451-0bc958489193",
       "migrations_dir": "migrations"
     }
   ],
