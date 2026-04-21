@@ -39,10 +39,10 @@ const LOGOUT_ICON = <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" s
 // ── Apps data ──────────────────────────────────────────────────────────
 
 const APPS = [
-  { id: 'linkedin-insights', name: 'LinkedIn Insights', desc: 'Track who engages with Invela Network posts', icon: ANALYTICS_ICON, bg: '#EEF2FF', href: '/apps/linkedin-insights/app', external: false, comingSoon: false },
-  { id: 'persona-lens', name: 'Persona Lens', desc: 'Analyze content through ICP perspectives', icon: LENS_ICON, bg: '#EEF2FF', href: '/apps/persona-lens', external: false, comingSoon: false },
-  { id: 'logo-finder', name: 'Logo Finder', desc: 'Resolve company names to canonical logo sets', icon: IMAGE_ICON, bg: '#EEF2FF', href: '/apps/logo-finder', external: false, comingSoon: false },
-  { id: 'salesquiz', name: 'SalesQuiz', desc: 'Conference booth lead generation quiz', icon: QUIZ_ICON, bg: '#EEF2FF', href: 'https://invela-sales-quiz.vercel.app/?mode=admin', external: true, comingSoon: false },
+  { id: 'linkedin-insights', name: 'LinkedIn Insights', desc: 'Track who engages with Invela Network posts', icon: ANALYTICS_ICON, bg: '#EEF2FF', href: '/apps/linkedin-insights/app', external: false },
+  { id: 'persona-lens', name: 'Persona Lens', desc: 'Analyze content through ICP perspectives', icon: LENS_ICON, bg: '#EEF2FF', href: '/apps/persona-lens', external: false },
+  { id: 'logo-finder', name: 'Logo Finder', desc: 'Resolve company names to canonical logo sets', icon: IMAGE_ICON, bg: '#EEF2FF', href: '/apps/logo-finder', external: false },
+  { id: 'salesquiz', name: 'SalesQuiz', desc: 'Conference booth lead generation quiz', icon: QUIZ_ICON, bg: '#EEF2FF', href: 'https://invela-sales-quiz.vercel.app/?mode=admin', external: true },
 ];
 
 // ── useUser hook ─────────────────────────────────────────────────────

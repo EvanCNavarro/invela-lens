@@ -26,8 +26,8 @@ export function formatFileSize(bytes: number): string {
   return `${mb.toFixed(mb < 10 ? 2 : 1)} MB`;
 }
 
-export function formatDate(timestamp: number): string {
-  return new Date(timestamp).toLocaleDateString('en-US', {
+export function formatDateTime(timestamp: number): string {
+  return new Date(timestamp).toLocaleString('en-US', {
     year: 'numeric', month: 'short', day: 'numeric',
     hour: '2-digit', minute: '2-digit',
   });

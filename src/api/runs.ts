@@ -24,7 +24,7 @@ export async function handleUpload(request: Request, env: Env): Promise<Response
   return Response.json({ key, filename: file.name, size: file.size });
 }
 
-export async function handleRunsCreate(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+export async function handleRunsCreate(request: Request, env: Env): Promise<Response> {
   const body = await request.json() as {
     input_type: 'url' | 'text' | 'file';
     input_url?: string;

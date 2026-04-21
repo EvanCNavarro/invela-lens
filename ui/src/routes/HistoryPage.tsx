@@ -13,7 +13,7 @@ import { useTitle } from '../hooks/useTitle';
 import { Dropdown } from '../components/Dropdown';
 import { EmptyState } from '../components/EmptyState';
 import { SkeletonList } from '../components/Skeleton';
-import { formatDurationMs } from '../lib/format';
+import { formatDurationMs, formatDateTime } from '../lib/format';
 import type { RunListResponse, RunListItem, RunStatus } from '../types';
 
 const PAGE_SIZE = 50;
@@ -176,7 +176,7 @@ export function HistoryPage() {
                       <td className="px-[14px] py-[10px]"><StatusPill status={run.status} /></td>
                       <td className="px-[14px] py-[10px] text-[#94A3B8]">{run.created_by ?? '—'}</td>
                       <td className="px-[14px] py-[10px] text-[#94A3B8]">
-                        {new Date(run.started_at).toLocaleString()}
+                        {formatDateTime(run.started_at)}
                       </td>
                     </tr>
                   );
@@ -252,7 +252,7 @@ function HistoryCard({ run }: { run: RunListItem }) {
         </div>
         <div className="col-span-2">
           <dt className="inline">Run at: </dt>
-          <dd className="inline">{new Date(run.started_at).toLocaleString()}</dd>
+          <dd className="inline">{formatDateTime(run.started_at)}</dd>
         </div>
         {run.created_by ? (
           <div className="col-span-2">

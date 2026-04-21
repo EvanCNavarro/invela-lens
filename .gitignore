@@ -11,3 +11,9 @@ dist/
 .vite/
 coverage/
 *.tsbuildinfo
+
+# TypeScript composite build artifacts — `tsc --build` emits .js/.d.ts
+# next to sources (only env.d.ts is hand-written).
+src/**/*.js
+src/**/*.d.ts
+!src/env.d.ts

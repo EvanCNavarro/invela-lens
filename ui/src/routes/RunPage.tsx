@@ -5,7 +5,7 @@ import { useTitle } from '../hooks/useTitle';
 import { Skeleton, SkeletonList } from '../components/Skeleton';
 import { Card } from '../components/Card';
 import { EmptyState } from '../components/EmptyState';
-import { formatDurationMs, formatDate } from '../lib/format';
+import { formatDurationMs, formatDateTime } from '../lib/format';
 import type { RunDetail, Scorecard, Finding } from '../types';
 import type { JSX } from 'react';
 import { BASE_PATH } from '../basePath';
@@ -208,7 +208,7 @@ function RunningView({ run, runId, onPipelineDone }: { run: RunDetail; runId: st
     ? run.input_url.replace(/^https?:\/\//, '').slice(0, 80)
     : run.input_type === 'file' ? 'Uploaded file' : 'Pasted text';
 
-  const dateStr = formatDate(run.started_at);
+  const dateStr = formatDateTime(run.started_at);
 
   return (
     <section className="px-6 py-6">
@@ -401,7 +401,7 @@ function StepRow({ status, label, detail, error }: { status: StepStatus; label: 
 
 function FailedView({ run }: { run: RunDetail }): JSX.Element {
   const navigate = useNavigate();
-  const dateStr = formatDate(run.started_at);
+  const dateStr = formatDateTime(run.started_at);
 
   return (
     <section className="px-6 py-6">
@@ -442,7 +442,7 @@ function FailedView({ run }: { run: RunDetail }): JSX.Element {
 
 function CompletedView({ run }: { run: RunDetail }): JSX.Element {
   const [activeIndex, setActiveIndex] = useState(0);
-  const dateStr = formatDate(run.started_at);
+  const dateStr = formatDateTime(run.started_at);
   const scorecards = run.scorecards;
   const scorecard = scorecards[activeIndex];
 

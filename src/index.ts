@@ -3,11 +3,11 @@ import { handleRunsCreate, handleRunsGet, handleRunsList, handleUpload } from '.
 import { handleRunsEvents } from './api/runs-events';
 
 export default {
-  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+  async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
 
     if (url.pathname.startsWith('/api/')) {
-      return dispatchApi(request, env, ctx, url);
+      return dispatchApi(request, env, url);
     }
 
     return env.ASSETS.fetch(request);
@@ -17,7 +17,6 @@ export default {
 async function dispatchApi(
   request: Request,
   env: Env,
-  ctx: ExecutionContext,
   url: URL,
 ): Promise<Response> {
   const { pathname } = url;
@@ -45,7 +44,7 @@ async function dispatchApi(
   if (pathname === '/api/upload' && method === 'POST') return handleUpload(request, env);
 
   // Runs
-  if (pathname === '/api/runs' && method === 'POST') return handleRunsCreate(request, env, ctx);
+  if (pathname === '/api/runs' && method === 'POST') return handleRunsCreate(request, env);
   if (pathname === '/api/runs' && method === 'GET') return handleRunsList(request, env, url);
 
   const eventsMatch = pathname.match(/^\/api\/runs\/([A-Za-z0-9]+)\/events$/);
