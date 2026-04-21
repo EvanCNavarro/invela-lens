@@ -13,14 +13,14 @@ interface Persona {
 
 export interface ScorecardResult {
   overall_score: number;
-  relevance: string;
+  relevance: 'high' | 'medium' | 'low' | 'none';
   summary: string;
   categories: Array<{
     id: string;
     name: string;
     score: number;
     findings: Array<{
-      severity: string;
+      severity: 'critical' | 'high' | 'medium' | 'low';
       title: string;
       description: string;
       evidence: string;

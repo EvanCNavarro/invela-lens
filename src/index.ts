@@ -1,5 +1,5 @@
 import { handlePersonasList, handlePersonasCreate, handlePersonasUpdate, handlePersonasDelete } from './api/personas';
-import { handleRunsCreate, handleRunsGet, handleRunsList } from './api/runs';
+import { handleRunsCreate, handleRunsGet, handleRunsList, handleUpload } from './api/runs';
 import { handleRunsEvents } from './api/runs-events';
 
 export default {
@@ -40,6 +40,9 @@ async function dispatchApi(
     if (name) return Response.json({ name, email: email ?? '' });
     return Response.json(null);
   }
+
+  // File upload
+  if (pathname === '/api/upload' && method === 'POST') return handleUpload(request, env);
 
   // Runs
   if (pathname === '/api/runs' && method === 'POST') return handleRunsCreate(request, env, ctx);

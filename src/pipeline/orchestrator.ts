@@ -6,6 +6,8 @@ interface RunRecord {
   input_type: string;
   input_url: string | null;
   input_text: string | null;
+  input_r2_key: string | null;
+  input_filename: string | null;
   persona_ids: string; // JSON array
 }
 
@@ -33,9 +35,11 @@ export async function runPipeline(env: Env, run: RunRecord): Promise<void> {
 
     const extraction = await extractContent(
       env,
-      run.input_type as 'url' | 'text',
+      run.input_type as 'url' | 'text' | 'file',
       run.input_url,
       run.input_text,
+      run.input_r2_key,
+      run.input_filename,
     );
 
     await db.prepare('UPDATE runs SET input_word_count = ?1 WHERE id = ?2').bind(extraction.wordCount, runId).run();

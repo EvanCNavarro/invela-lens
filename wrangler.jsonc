@@ -27,6 +27,9 @@
   "ai": {
     "binding": "AI"
   },
+  "browser": {
+    "binding": "BROWSER"
+  },
   "vars": {
     "CF_ACCOUNT_ID": "318d95fea69910a23a72a8797e03ed7d"
   },
