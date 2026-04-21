@@ -206,10 +206,14 @@ export async function apiRequest<T>(
   }
 
   // Server error envelope: {error: '<code>', message?: '...'}
+  // Distinguish from data objects that happen to have an `error` field
+  // (e.g., a run with error: "pipeline failed") by checking for `id` —
+  // error envelopes never have an `id` field, data objects always do.
   if (
     parsed &&
     typeof parsed === 'object' &&
-    typeof (parsed as Record<string, unknown>).error === 'string'
+    typeof (parsed as Record<string, unknown>).error === 'string' &&
+    !('id' in (parsed as Record<string, unknown>))
   ) {
     return { ok: false, error: parsed as ApiError };
   }

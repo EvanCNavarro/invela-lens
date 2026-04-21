@@ -18,7 +18,6 @@ export function VersionChecker() {
         if (!res.ok) return;
         const { version } = await res.json();
         if (version && version !== BUILD_VERSION) {
-          console.log(`[Version] New version: ${version} (current: ${BUILD_VERSION})`);
           window.location.reload();
         }
       } catch { /* non-critical */ }

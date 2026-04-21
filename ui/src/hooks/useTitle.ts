@@ -1,9 +1,9 @@
 import { useEffect } from 'react';
 
-/** Set the document title. Pattern: "{page} · Persona Lens" */
+/** Set the document title. Pattern: "{page} · Marketing Tools" */
 export function useTitle(page: string) {
   useEffect(() => {
-    document.title = `${page} · Persona Lens`;
-    return () => { document.title = 'Persona Lens'; };
+    document.title = `${page} · Marketing Tools`;
+    return () => { document.title = 'Marketing Tools'; };
   }, [page]);
 }
