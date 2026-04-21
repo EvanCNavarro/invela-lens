@@ -1,12 +1,14 @@
-import { useParams, useNavigate } from 'react-router-dom';
-import { useEffect, useRef, useState } from 'react';
+import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useEffect, useRef, useState, useMemo } from 'react';
 import { useApi } from '../hooks/useApi';
 import { useTitle } from '../hooks/useTitle';
 import { Skeleton, SkeletonList } from '../components/Skeleton';
 import { Card } from '../components/Card';
 import { EmptyState } from '../components/EmptyState';
+import { formatDurationMs, formatDate } from '../lib/format';
 import type { RunDetail, Scorecard, Finding } from '../types';
 import type { JSX } from 'react';
+import { BASE_PATH } from '../basePath';
 
 // ── Score color helpers ──────────────────────────────────────────────
 
@@ -55,14 +57,18 @@ const CATEGORY_NAMES: Record<string, string> = {
   competitive_positioning: 'Competitive Positioning',
 };
 
-// ── Pipeline steps (for live mode) ───────────────────────────────────
+// ── SSE event types ──────────────────────────────────────────────────
 
-const PIPELINE_STEPS = [
-  { id: 'extract', label: 'Extracting content' },
-  { id: 'analyze', label: 'Analyzing with personas' },
-  { id: 'score', label: 'Computing scores' },
-  { id: 'finalize', label: 'Saving results' },
-];
+interface PipelineEvent {
+  type: string;
+  step: string | null;
+  label?: string;
+  persona_ids?: number[];
+  content_source?: string;
+  duration_ms?: number;
+  error?: string;
+  truncated?: boolean;
+}
 
 // ── Main component ───────────────────────────────────────────────────
 
@@ -73,18 +79,13 @@ export function RunPage(): JSX.Element {
 
   useTitle(data ? `Run ${id?.slice(0, 8)}` : 'Run Detail');
 
-  // Poll every 2s while status is running
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  useEffect(() => {
-    if (data?.status === 'running') {
-      intervalRef.current = setInterval(reload, 2000);
-    }
-    return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current);
-    };
-  }, [data?.status, reload]);
+  // No polling — RunningView uses SSE for live updates and calls
+  // onPipelineDone() when the pipeline finishes, which triggers
+  // a single reload to fetch the completed scorecard data.
 
-  if (loading) {
+  // Only show skeleton on the very first load (no data at all).
+  // After that, keep showing the current view while reloading in the background.
+  if (loading && !data) {
     return (
       <section className="px-6 py-6">
         <Skeleton className="h-6 w-48 rounded-lg" />
@@ -95,7 +96,7 @@ export function RunPage(): JSX.Element {
     );
   }
 
-  if (error) {
+  if (error && !data) {
     return (
       <section className="px-6 py-6">
         <EmptyState tone="error">Failed to load run: {error.message ?? error.error}</EmptyState>
@@ -112,68 +113,287 @@ export function RunPage(): JSX.Element {
 
   if (!data) return <section className="px-6 py-6"><EmptyState>No data.</EmptyState></section>;
 
-  if (data.status === 'running') return <RunningView run={data} />;
+  if (data.status === 'running') return <RunningView run={data} runId={id!} onPipelineDone={reload} />;
   if (data.status === 'failed') return <FailedView run={data} />;
   return <CompletedView run={data} />;
 }
 
-// ── Running view ─────────────────────────────────────────────────────
+// ── Running view with real SSE ──────────────────────────────────────
 
-function RunningView({ run }: { run: RunDetail }): JSX.Element {
-  // Simulate progress based on elapsed time
+function RunningView({ run, runId, onPipelineDone }: { run: RunDetail; runId: string; onPipelineDone: () => void }): JSX.Element {
+  const [events, setEvents] = useState<PipelineEvent[]>([]);
   const [elapsed, setElapsed] = useState(0);
+  const [done, setDone] = useState(false);
+  const eventSourceRef = useRef<EventSource | null>(null);
+  const onPipelineDoneRef = useRef(onPipelineDone);
+  onPipelineDoneRef.current = onPipelineDone;
+
+  // Track elapsed time — stop when pipeline is done
   useEffect(() => {
+    if (done) return;
     const timer = setInterval(() => setElapsed(Date.now() - run.started_at), 500);
     return () => clearInterval(timer);
-  }, [run.started_at]);
+  }, [run.started_at, done]);
 
-  const estimatedStepDuration = 8000;
-  const currentStepIndex = Math.min(
-    Math.floor(elapsed / estimatedStepDuration),
-    PIPELINE_STEPS.length - 1,
-  );
+  // Fallback: if SSE doesn't deliver a completion event (e.g. Worker timeout),
+  // poll status every 10s via a lightweight fetch that doesn't trigger skeletons.
+  useEffect(() => {
+    if (done) return;
+    const poll = setInterval(async () => {
+      try {
+        const res = await fetch(`${BASE_PATH}/api/runs/${runId}`);
+        if (!res.ok) return;
+        const data = await res.json() as { status: string };
+        if (data.status === 'completed' || data.status === 'failed') {
+          setDone(true);
+          clearInterval(poll);
+          setTimeout(() => onPipelineDoneRef.current(), 500);
+        }
+      } catch { /* ignore */ }
+    }, 10000);
+    return () => clearInterval(poll);
+  }, [runId, done]);
+
+  // Subscribe to SSE with reconnection
+  useEffect(() => {
+    let cancelled = false;
+    let retryTimeout: ReturnType<typeof setTimeout>;
+
+    function connect() {
+      if (cancelled) return;
+      const es = new EventSource(`${BASE_PATH}/api/runs/${runId}/events`);
+      eventSourceRef.current = es;
+
+      const EVENT_TYPES = [
+        'pipeline.started', 'step.started', 'step.completed',
+        'step.failed', 'step.progress', 'pipeline.completed', 'pipeline.failed',
+      ];
+
+      function handleEvent(e: MessageEvent) {
+        try {
+          const parsed = JSON.parse(e.data) as PipelineEvent;
+          setEvents(prev => {
+            const next = [...prev, parsed];
+            return next.length > 100 ? next.slice(-100) : next;
+          });
+
+          // Pipeline finished — stop the timer and reload the run data
+          // after a brief delay so the user sees the final step
+          if (parsed.type === 'pipeline.completed' || parsed.type === 'pipeline.failed') {
+            setDone(true);
+            es.close();
+            setTimeout(() => onPipelineDoneRef.current(), 1500);
+          }
+        } catch { /* skip malformed events */ }
+      }
+
+      for (const type of EVENT_TYPES) es.addEventListener(type, handleEvent);
+
+      es.onerror = () => {
+        es.close();
+        if (!cancelled) retryTimeout = setTimeout(connect, 2000);
+      };
+    }
+
+    connect();
+
+    return () => {
+      cancelled = true;
+      clearTimeout(retryTimeout);
+      eventSourceRef.current?.close();
+    };
+  }, [runId]);
+
+  const inputLabel = run.input_url
+    ? run.input_url.replace(/^https?:\/\//, '').slice(0, 80)
+    : run.input_type === 'file' ? 'Uploaded file' : 'Pasted text';
+
+  const dateStr = formatDate(run.started_at);
 
   return (
     <section className="px-6 py-6">
       <h1 className="text-[13px] font-bold uppercase tracking-[0.1em] text-[#64748B]">
-        Analyzing...
+        Analysis in Progress
       </h1>
 
-      <Card className="mt-6">
-        <div className="flex flex-col gap-4">
-          {PIPELINE_STEPS.map((step, i) => {
-            const isCompleted = i < currentStepIndex;
-            const isActive = i === currentStepIndex;
-            const isPending = i > currentStepIndex;
-
-            return (
-              <div key={step.id} className="flex items-center gap-3">
-                {isCompleted && (
-                  <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#ECFDF5]">
-                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
-                      <path d="M3 7l3 3 5-5" stroke="#0E9F6E" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
-                  </span>
-                )}
-                {isActive && (
-                  <span className="flex h-6 w-6 shrink-0 items-center justify-center">
-                    <span className="h-5 w-5 animate-spin rounded-full border-2 border-[#4166F5] border-t-transparent" />
-                  </span>
-                )}
-                {isPending && (
-                  <span className="flex h-6 w-6 shrink-0 items-center justify-center">
-                    <span className="h-2.5 w-2.5 rounded-full bg-[#E2E8F0]" />
-                  </span>
-                )}
-                <span className={`text-sm ${isActive ? 'font-semibold text-[#0F172A]' : isCompleted ? 'text-[#64748B]' : 'text-[#94A3B8]'}`}>
-                  {step.label}
-                </span>
-              </div>
-            );
-          })}
+      {/* Run metadata */}
+      <Card className="mt-4">
+        <div className="flex flex-wrap gap-x-6 gap-y-2 text-sm">
+          <div>
+            <span className="text-xs font-semibold uppercase tracking-wider text-[#94A3B8]">Input</span>
+            <p className="mt-0.5 text-[#0F172A]">{inputLabel}</p>
+          </div>
+          <div>
+            <span className="text-xs font-semibold uppercase tracking-wider text-[#94A3B8]">Personas</span>
+            <p className="mt-0.5 text-[#0F172A]">{run.persona_ids.length} selected</p>
+          </div>
+          <div>
+            <span className="text-xs font-semibold uppercase tracking-wider text-[#94A3B8]">Started</span>
+            <p className="mt-0.5 text-[#0F172A]">{dateStr}</p>
+          </div>
+          <div>
+            <span className="text-xs font-semibold uppercase tracking-wider text-[#94A3B8]">Elapsed</span>
+            <p className="mt-0.5 font-mono text-[#0F172A]">{formatDurationMs(elapsed)}</p>
+          </div>
+          <div>
+            <span className="text-xs font-semibold uppercase tracking-wider text-[#94A3B8]">Run By</span>
+            <p className="mt-0.5 text-[#0F172A]">{run.created_by}</p>
+          </div>
         </div>
       </Card>
+
+      {/* Pipeline progress — structured by phase */}
+      <PipelineProgress events={events} />
     </section>
+  );
+}
+
+// ── Structured pipeline progress ─────────────────────────────────────
+
+type StepStatus = 'pending' | 'running' | 'done' | 'failed';
+
+interface ParsedStep {
+  id: string;
+  label: string;
+  status: StepStatus;
+  detail?: string;
+  error?: string;
+}
+
+function PipelineProgress({ events }: { events: PipelineEvent[] }): JSX.Element {
+  const { extraction, personas, pipelineDone } = useMemo(() => {
+    // Derive structured state from flat event list
+    let extraction: ParsedStep = { id: 'fetch', label: 'Extracting content', status: 'pending' };
+    const personaMap = new Map<string, ParsedStep>();
+    let pipelineDone = false;
+
+    for (const evt of events) {
+      const stepId = evt.step ?? '';
+
+      if (stepId === 'fetch' && evt.type === 'step.started') {
+        extraction = { ...extraction, status: 'running', label: evt.label ?? 'Fetching content...' };
+      } else if (stepId === 'fetch' && evt.type === 'step.completed') {
+        extraction = { ...extraction, status: 'done', detail: evt.label };
+      } else if (stepId === 'fetch' && evt.type === 'step.failed') {
+        extraction = { ...extraction, status: 'failed', error: evt.error };
+      } else if (stepId.startsWith('analyze:')) {
+        const personaKey = stepId;
+        const existing = personaMap.get(personaKey) ?? { id: personaKey, label: '', status: 'pending' as StepStatus };
+        if (evt.type === 'step.started') {
+          personaMap.set(personaKey, { ...existing, status: 'running', label: evt.label ?? 'Analyzing...' });
+        } else if (evt.type === 'step.completed') {
+          personaMap.set(personaKey, { ...existing, status: 'done', detail: evt.label });
+        } else if (evt.type === 'step.failed') {
+          personaMap.set(personaKey, { ...existing, status: 'failed', error: evt.error ?? evt.label });
+        }
+      } else if (evt.type === 'pipeline.started') {
+        extraction = { ...extraction, status: 'running' };
+      } else if (evt.type === 'pipeline.completed' || evt.type === 'pipeline.failed') {
+        pipelineDone = true;
+      }
+    }
+
+    return {
+      extraction,
+      personas: Array.from(personaMap.values()),
+      pipelineDone,
+    };
+  }, [events]);
+
+  const noEvents = events.length === 0;
+
+  return (
+    <Card className="mt-4">
+      <h2 className="text-[13px] font-bold uppercase tracking-[0.1em] text-[#64748B] mb-4">
+        Pipeline
+      </h2>
+
+      {/* Phase 1: Content extraction */}
+      <StepRow
+        status={noEvents ? 'running' : extraction.status}
+        label={noEvents ? 'Initializing pipeline...' : extraction.label}
+        detail={extraction.detail}
+        error={extraction.error}
+      />
+
+      {/* Phase 2: Per-persona analysis */}
+      {personas.length > 0 && (
+        <div className="mt-3 border-t border-[#E2E8F0] pt-3">
+          <p className="mb-2 text-[11px] font-bold uppercase tracking-[0.1em] text-[#94A3B8]">
+            Persona Analysis
+            <span className="ml-1.5 font-normal">
+              ({personas.filter(p => p.status === 'done').length}/{personas.length} complete)
+            </span>
+          </p>
+          <div className="flex flex-col gap-1">
+            {personas.map((p) => (
+              <StepRow
+                key={p.id}
+                status={p.status}
+                label={p.label}
+                detail={p.detail}
+                error={p.error}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Pipeline done */}
+      {pipelineDone && (
+        <div className="mt-3 border-t border-[#E2E8F0] pt-3">
+          <StepRow status="done" label="Loading results..." />
+        </div>
+      )}
+    </Card>
+  );
+}
+
+const CHECK_GREEN = (
+  <span className="flex h-6 w-6 items-center justify-center rounded-full bg-[#ECFDF5]">
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+      <path d="M3 7l3 3 5-5" stroke="#0E9F6E" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  </span>
+);
+
+const X_RED = (
+  <span className="flex h-6 w-6 items-center justify-center rounded-full bg-[#FEE2E2]">
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+      <path d="M4 4l6 6M10 4l-6 6" stroke="#E02424" strokeWidth="2" strokeLinecap="round" />
+    </svg>
+  </span>
+);
+
+const SPINNER = <span className="h-5 w-5 animate-spin rounded-full border-2 border-[#4166F5] border-t-transparent" />;
+
+const DOT_PENDING = (
+  <span className="flex h-6 w-6 items-center justify-center">
+    <span className="h-2.5 w-2.5 rounded-full bg-[#E2E8F0]" />
+  </span>
+);
+
+function StepRow({ status, label, detail, error }: { status: StepStatus; label: string; detail?: string; error?: string }): JSX.Element {
+  return (
+    <div className="flex items-start gap-3 py-1.5">
+      <div className="flex h-6 w-6 shrink-0 items-center justify-center">
+        {status === 'done' && CHECK_GREEN}
+        {status === 'failed' && X_RED}
+        {status === 'running' && SPINNER}
+        {status === 'pending' && DOT_PENDING}
+      </div>
+      <div className="min-w-0 flex-1">
+        <span className={`text-sm ${
+          status === 'failed' ? 'text-[#E02424] font-semibold' :
+          status === 'running' ? 'text-[#0F172A] font-semibold' :
+          status === 'done' ? 'text-[#64748B]' :
+          'text-[#94A3B8]'
+        }`}>
+          {status === 'done' && detail ? detail : label}
+        </span>
+        {error && <p className="mt-0.5 text-xs text-[#E02424]">{error}</p>}
+      </div>
+    </div>
   );
 }
 
@@ -181,22 +401,39 @@ function RunningView({ run }: { run: RunDetail }): JSX.Element {
 
 function FailedView({ run }: { run: RunDetail }): JSX.Element {
   const navigate = useNavigate();
+  const dateStr = formatDate(run.started_at);
+
   return (
     <section className="px-6 py-6">
       <h1 className="text-[13px] font-bold uppercase tracking-[0.1em] text-[#64748B] mb-4">
         Run Failed
       </h1>
-      <div className="rounded-xl border border-[#FCA5A5] bg-[#FEE2E2] px-4 py-3" role="alert">
+
+      {/* Run metadata */}
+      <RunMeta run={run} dateStr={dateStr} />
+
+      <div className="mt-4 rounded-xl border border-[#FCA5A5] bg-[#FEE2E2] px-4 py-3" role="alert">
         <p className="text-sm font-semibold text-[#E02424]">Analysis failed</p>
         <p className="mt-1 text-sm text-[#991B1B]">{run.error ?? 'An unknown error occurred.'}</p>
       </div>
-      <button
-        type="button"
-        onClick={() => navigate('/')}
-        className="mt-4 rounded-xl bg-[#4166F5] px-4 py-2 text-sm font-semibold text-white hover:bg-[#3354D1]"
-      >
-        Try Again
-      </button>
+      <div className="mt-4 flex gap-3">
+        <button
+          type="button"
+          onClick={() => navigate('/')}
+          className="rounded-xl bg-[#4166F5] px-4 py-2 text-sm font-semibold text-white hover:bg-[#3354D1]"
+        >
+          Try Again
+        </button>
+        {run.error?.includes('Text') && (
+          <button
+            type="button"
+            onClick={() => navigate('/?tab=text')}
+            className="rounded-xl border border-[#E2E8F0] bg-white px-4 py-2 text-sm font-semibold text-[#0F172A] hover:bg-[#F8FAFC]"
+          >
+            Paste as Text Instead
+          </button>
+        )}
+      </div>
     </section>
   );
 }
@@ -204,8 +441,12 @@ function FailedView({ run }: { run: RunDetail }): JSX.Element {
 // ── Completed view (scorecard) ───────────────────────────────────────
 
 function CompletedView({ run }: { run: RunDetail }): JSX.Element {
-  const scorecard = run.scorecards[0];
-  if (!scorecard) {
+  const [activeIndex, setActiveIndex] = useState(0);
+  const dateStr = formatDate(run.started_at);
+  const scorecards = run.scorecards;
+  const scorecard = scorecards[activeIndex];
+
+  if (!scorecards.length) {
     return (
       <section className="px-6 py-6">
         <EmptyState>No scorecard data available for this run.</EmptyState>
@@ -215,32 +456,95 @@ function CompletedView({ run }: { run: RunDetail }): JSX.Element {
 
   return (
     <section className="px-6 py-6">
-      <ScorecardHeader run={run} scorecard={scorecard} />
-      <SummarySection summary={scorecard.summary} />
-      <CategoryBreakdown findings={scorecard.findings} score={scorecard.overall_score} />
-      <FindingsSection findings={scorecard.findings} />
+      <div className="flex items-center gap-3 mb-4">
+        <Link to="/history" className="text-xs text-[#4166F5] hover:underline">History</Link>
+        <span className="text-xs text-[#94A3B8]">/</span>
+        <span className="text-xs text-[#64748B]">Run {run.id.slice(0, 8)}</span>
+      </div>
+
+      {/* Persona tabs — only show if multiple scorecards */}
+      {scorecards.length > 1 && (
+        <div className="mb-4 flex gap-1 rounded-lg bg-[#F1F5F9] p-1 overflow-x-auto">
+          {scorecards.map((sc, i) => (
+            <button
+              key={sc.id}
+              type="button"
+              onClick={() => setActiveIndex(i)}
+              className={`flex items-center gap-2 rounded-md px-3 py-2 text-[13px] font-medium whitespace-nowrap transition-colors ${
+                i === activeIndex
+                  ? 'bg-white text-[#0F172A] shadow-sm'
+                  : 'text-[#64748B] hover:text-[#0F172A]'
+              }`}
+            >
+              <span>{sc.persona_name}</span>
+              <span
+                className="rounded-full px-1.5 py-0.5 text-[10px] font-bold"
+                style={{
+                  backgroundColor: scoreBgColor(sc.overall_score),
+                  color: scoreColor(sc.overall_score),
+                }}
+              >
+                {sc.overall_score}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {scorecard && (
+        <>
+          <ScorecardHeader run={run} scorecard={scorecard} dateStr={dateStr} />
+          <SummarySection summary={scorecard.summary} />
+          <CategoryBreakdown findings={scorecard.findings} score={scorecard.overall_score} />
+          <FindingsSection findings={scorecard.findings} />
+        </>
+      )}
+
+      {/* Completion footer */}
+      <div className="mt-8 border-t border-[#E2E8F0] pt-4 text-xs text-[#94A3B8]">
+        Completed {dateStr} · Duration {formatDurationMs(run.total_duration_ms)} · {run.input_word_count?.toLocaleString() ?? '—'} words analyzed · {scorecards.length} persona{scorecards.length !== 1 ? 's' : ''} · Run by {run.created_by}
+      </div>
     </section>
+  );
+}
+
+// ── Shared run metadata card ────────────────────────────────────────
+
+function RunMeta({ run, dateStr }: { run: RunDetail; dateStr: string }): JSX.Element {
+  const inputLabel = run.input_url
+    ? run.input_url.replace(/^https?:\/\//, '').slice(0, 80)
+    : run.input_type === 'file' ? 'Uploaded file' : 'Pasted text';
+
+  return (
+    <Card>
+      <div className="flex flex-wrap gap-x-6 gap-y-2 text-sm">
+        <div>
+          <span className="text-xs font-semibold uppercase tracking-wider text-[#94A3B8]">Input</span>
+          <p className="mt-0.5 text-[#0F172A]">{inputLabel}</p>
+        </div>
+        <div>
+          <span className="text-xs font-semibold uppercase tracking-wider text-[#94A3B8]">Personas</span>
+          <p className="mt-0.5 text-[#0F172A]">{run.persona_ids.length} selected</p>
+        </div>
+        <div>
+          <span className="text-xs font-semibold uppercase tracking-wider text-[#94A3B8]">Started</span>
+          <p className="mt-0.5 text-[#0F172A]">{dateStr}</p>
+        </div>
+        <div>
+          <span className="text-xs font-semibold uppercase tracking-wider text-[#94A3B8]">Run By</span>
+          <p className="mt-0.5 text-[#0F172A]">{run.created_by}</p>
+        </div>
+      </div>
+    </Card>
   );
 }
 
 // ── Header section ───────────────────────────────────────────────────
 
-function ScorecardHeader({ run, scorecard }: { run: RunDetail; scorecard: Scorecard }): JSX.Element {
+function ScorecardHeader({ run, scorecard, dateStr }: { run: RunDetail; scorecard: Scorecard; dateStr: string }): JSX.Element {
   const color = scoreColor(scorecard.overall_score);
   const bgColor = scoreBgColor(scorecard.overall_score);
   const relevanceStyle = RELEVANCE_STYLES[scorecard.relevance] ?? RELEVANCE_STYLES.none;
-
-  const duration = run.total_duration_ms
-    ? `${(run.total_duration_ms / 1000).toFixed(1)}s`
-    : null;
-
-  const dateStr = new Date(run.started_at).toLocaleDateString('en-US', {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
 
   return (
     <Card className="flex flex-col gap-4 sm:flex-row sm:items-start sm:gap-6">
@@ -269,20 +573,17 @@ function ScorecardHeader({ run, scorecard }: { run: RunDetail; scorecard: Scorec
 
         <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-[#64748B]">
           {run.input_url && (
-            <span>
-              <a
-                href={run.input_url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-[#4166F5] hover:underline"
-              >
-                {run.input_url.replace(/^https?:\/\//, '').slice(0, 60)}
-              </a>
-            </span>
+            <a
+              href={run.input_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-[#4166F5] hover:underline"
+            >
+              {run.input_url.replace(/^https?:\/\//, '').slice(0, 60)}
+            </a>
           )}
-          {duration && <span>Duration: {duration}</span>}
+          {run.total_duration_ms != null && <span>Duration: {formatDurationMs(run.total_duration_ms)}</span>}
           {run.input_word_count != null && <span>{run.input_word_count.toLocaleString()} words</span>}
-          <span>Run by {run.created_by}</span>
           <span>{dateStr}</span>
         </div>
       </div>
@@ -318,7 +619,6 @@ function computeCategories(findings: Finding[], overallScore: number): CategoryS
     groups.set(f.category_id, group);
   }
 
-  // Build category stats; derive per-category score from severity distribution
   const categories: CategoryStats[] = [];
   for (const [catId, catFindings] of groups) {
     const severityPenalties: Record<string, number> = { critical: 25, high: 15, medium: 8, low: 3 };
@@ -336,7 +636,6 @@ function computeCategories(findings: Finding[], overallScore: number): CategoryS
     });
   }
 
-  // Sort by score ascending so worst categories appear first
   categories.sort((a, b) => a.score - b.score);
   return categories;
 }
@@ -390,7 +689,6 @@ function CategoryCard({ category }: { category: CategoryStats }): JSX.Element {
 function FindingsSection({ findings }: { findings: Finding[] }): JSX.Element {
   if (findings.length === 0) return <></>;
 
-  // Group by severity in order
   const grouped = new Map<Finding['severity'], Finding[]>();
   for (const sev of SEVERITY_ORDER) {
     const sevFindings = findings.filter((f) => f.severity === sev);
@@ -429,7 +727,6 @@ function FindingCard({ finding }: { finding: Finding }): JSX.Element {
 
   return (
     <Card padding="sm" className="flex flex-col gap-2">
-      {/* Pills */}
       <div className="flex flex-wrap items-center gap-2">
         <span className={`rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${sev.bg} ${sev.text}`}>
           {sev.label}
@@ -438,29 +735,19 @@ function FindingCard({ finding }: { finding: Finding }): JSX.Element {
           {categoryName}
         </span>
       </div>
-
-      {/* Title */}
       <h4 className="text-sm font-bold text-[#0F172A]">{finding.title}</h4>
-
-      {/* Description */}
       <p className="text-sm text-[#334155] leading-relaxed">{finding.description}</p>
-
-      {/* Evidence */}
       {finding.evidence && (
         <blockquote className="bg-[#F8FAFC] border-l-4 border-[#E2E8F0] pl-4 py-2 text-sm text-[#64748B] italic rounded-r-lg">
           {finding.evidence}
         </blockquote>
       )}
-
-      {/* Recommendation */}
       {finding.recommendation && (
         <div className="bg-[#ECF2FD] border-l-4 border-[#4166F5] pl-4 py-2 text-sm text-[#1E3A5F] rounded-r-lg">
           <span className="font-semibold">Recommendation: </span>
           {finding.recommendation}
         </div>
       )}
-
-      {/* Reasoning */}
       {finding.reasoning && (
         <p className="text-xs text-[#94A3B8] leading-relaxed">{finding.reasoning}</p>
       )}
